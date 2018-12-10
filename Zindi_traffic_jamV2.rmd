@@ -1,0 +1,391 @@
+---
+title: "Zindi_Traffic Jam analysis"
+author: "Denis"
+date: " `r as.Date(Sys.time())` "
+output:
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+    toc_depth: 3
+  html_document:
+    css: kable.css
+    toc: yes
+---
+
+\newpage
+\centering
+\raggedright
+\newpage
+\hypersetup{linkcolor=black}
+\tableofcontents
+\newpage
+
+
+
+```{r echo=F}
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(lubridate)
+require(randomForest)
+library(caret)
+```
+
+
+
+```{r }
+
+# Reading the data
+
+tr <- read.csv("C:/Users/dmunene/OneDrive - Dalberg Global Development Advisors/RESSOL/Personal/Data Analysis/Traffic Jam/train_revisedV2.csv")
+tt <- read.csv("C:/Users/dmunene/OneDrive - Dalberg Global Development Advisors/RESSOL/Personal/Data Analysis/Traffic Jam/test_questions.csv")
+
+tr <- as_factor(tr)
+tt <- as_factor(tt)
+
+# Previewing the top data points
+
+head(tr[,])
+head(tt[,])
+
+
+```
+
+
+#### Processing Date/Time
+
+```{r, echo=FALSE}
+# travel date to day of week
+
+
+tr$travel_date <- lubridate::dmy(tr$travel_date)
+tr$travel_date<-  weekdays(tr$travel_date)
+
+tt$travel_date <- lubridate::ymd(tt$travel_date)
+tt$travel_date <-  weekdays(tt$travel_date)
+
+# Parsing time and creating time in Hour
+tr$travel_time <- parse_time(tr$travel_time)
+tr$travel_timeH <- lubridate::hour(tr$travel_time)
+
+tt$travel_time <- parse_time(tt$travel_time)
+tt$travel_timeH <- lubridate::hour(tt$travel_time)
+```
+
+
+
+
+
+```{r, echo=F}
+# Grouping data on number of tickets and merging with main dataset
+
+tr1 <- tr %>% group_by(ride_id,travel_date) %>% summarise(number_of_tickets=n())
+
+tr2 <- merge(tr1,tr)
+
+
+
+tt1 <- tt %>% group_by(ride_id,travel_date) %>% summarise(number_of_tickets=n())
+
+tt2 <- merge(tt1,tt)
+
+
+
+
+# selecting variables for analysis
+
+tr3 <- tr2 %>% dplyr:: select(travel_date,travel_timeH,travel_from,car_type,max_capacity,number_of_tickets)
+
+tt3 <- tt2 %>% dplyr:: select(ride_id,travel_date,travel_timeH,travel_from,car_type,max_capacity,number_of_tickets)
+
+anyNA(tr3)
+
+```
+
+
+
+```{r echo=T}
+
+#divide the data into train and test
+set.seed(121)
+
+trainRowNumbers <- createDataPartition(tr3$number_of_tickets, p = 0.7, list = F)
+
+
+train_dt <- tr3[trainRowNumbers,] 
+test_dt <- tr3[-trainRowNumbers,]
+
+
+
+# Store X and Y for later use.
+x <- train_dt[,1:5]
+y <- train_dt$number_of_tickets
+
+# One-Hot Encoding
+# Creating dummy variables is converting a categorical variable to as many binary variables as here are categories.
+
+dummies_model <- dummyVars(number_of_tickets~., data = train_dt)
+
+# Create the dummy variables using predict. The Y variable (number_of_tickets) will not be present in train_dt2.
+train_dt <- predict(dummies_model,newdata = train_dt)
+
+# # Convert to dataframe
+train_dt <- data.frame(train_dt)
+
+# # See the structure of the new dataset
+str(train_dt)
+
+
+# Controliing for the range to between 0 and 1
+preProcess_range_model <- preProcess(train_dt, method = 'range')
+train_dt <- predict(preProcess_range_model, newdata = train_dt)
+
+# Append the Y variable
+train_dt$number_of_tickets <- y
+
+apply(train_dt[,1:10],2,FUN = function(x){c('min' = min(x),'max' = max(x))})
+
+```
+
+
+
+### Train in model mars
+
+```{r}
+
+# Set the seed for reproducibility
+set.seed(134)
+
+# Train the model using randomForest and predict on the training data itself.
+model_mars = train(number_of_tickets ~., data = train_dt, method = 'earth')
+fitted <- predict(model_mars)
+
+model_mars
+
+plot(model_mars, main = "Model Accuracies with MARS")
+
+varimp_mars <- varImp(model_mars)
+plot(varimp_mars, main = "Variable Importance with MARS")
+
+
+```
+
+
+```{r}
+
+# Create one-hot encodings (dummy variables) on test data
+tr_test <- predict(dummies_model,test_dt)
+
+tr_test <- data.frame(tr_test)
+
+preProcess_range_model2 <- preProcess(tr_test, method = 'range')
+
+tr_test <- predict(preProcess_range_model2,newdata =tr_test)
+
+head(tr_test[,1:7])
+
+
+```
+
+
+
+```{r}
+
+
+# Predict on testData
+
+predicts <- predict(model_mars,tr_test)
+
+prr <- round(predicts)
+
+head(prr)
+
+
+```
+
+### Testing the MAE
+
+```{r}
+MAE(prr,test_dt$number_of_tickets)
+
+```
+
+## Preparing test data
+
+```{r echo=T}
+# Step 2: Create one-hot encodings (dummy variables) on test data
+tr_test <- predict(dummies_model,test_dt)
+
+tr_test <- data.frame(tr_test)
+
+preProcess_range_model2 <- preProcess(tr_test, method = 'range')
+
+tr_test <- predict(preProcess_range_model2,newdata =tr_test)
+
+head(tr_test[,1:7])
+
+
+```
+
+
+
+```{r}
+
+# Step 2: Create one-hot encodings (dummy variables) on MAIN test data
+dummies_model2 <- dummyVars(number_of_tickets~., data = tt3)
+
+tt_dt <- predict(dummies_model2,newdata = tt3)
+
+
+tt_dt <- data.frame(tt_dt)
+
+
+preProcess_range_model3 <- preProcess(tt3, method = 'range')
+
+
+
+# Step 3: Transform the features to range between 0 and 1
+tt4 <- predict(preProcess_range_model3, tt_dt)
+
+# View
+head(tt4[,1:7])
+
+```
+
+
+
+
+
+### Train in SVM
+
+```{r}
+
+model_svm <- train(number_of_tickets~., data = tr3, method = 'svmRadial')
+
+model_svm
+
+```
+
+
+
+
+
+### Train in random forest
+
+```{r}
+
+# Create a Random Forest model with default parameters
+
+model1 <- randomForest(number_of_tickets ~ ., data = train_dt, importance = T)
+
+model1
+
+
+
+```
+
+
+
+```{r}
+
+# Predict on testData
+
+predictss <- predict(model1,tr_test)
+
+prrr <- round(predictss)
+
+head(prrr)
+
+
+model3 <- randomForest(number_of_tickets ~ ., data = train_dt, ntree = 500, mtry = 12, importance = T)
+
+model3
+
+
+# Predict on testData
+
+predict_frst3 <- predict(model3,tr_test)
+
+p_forest3 <- round(predict_frst3)
+
+head(p_forest3)
+
+```
+
+
+
+
+### Testing the MAE for random forest
+
+```{r}
+MAE(prrr,test_dt$number_of_tickets)
+
+MAE(p_forest3,test_dt$number_of_tickets)
+
+```
+
+### Running model on main test set
+```{r}
+
+prediction2 <- predict(model1,tt4)
+
+p_forest <- round(prediction2)
+
+head(p_forest)
+
+
+```
+
+
+### Running model3 on main test set
+
+```{r}
+
+predict_frst3 <- predict(model3,tt4)
+
+p_forest3 <- round(predict_frst3)
+
+head(p_forest3)
+
+
+```
+
+
+
+## Embedd prediction to main test data and output submission
+
+```{r}
+# convert to dataframe
+p_forest <- data.frame(p_forest)
+
+
+# embedding on main test data
+
+
+df <- data.frame(tt2$ride_id,p_forest)
+df_f <- df %>%
+  select(ride_id = tt2.ride_id,number_of_tickets=p_forest)
+
+write.csv(df_f,"C:/Users/dmunene/OneDrive - Dalberg Global Development Advisors/RESSOL/Personal/Data Analysis/Traffic Jam/Nesh_Submission3.csv", row.names = F)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
